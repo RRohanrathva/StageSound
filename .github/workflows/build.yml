@@ -1,0 +1,59 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find the project inside the uploaded zip and extract it
+        run: |
+          set -e
+          ROOT=""
+          mapfile -d '' ZIPS < <(find . -name '*.zip' -not -path './.git/*' -print0)
+          for z in "${ZIPS[@]}"; do
+            d="$(mktemp -d)"
+            unzip -q "$z" -d "$d" || continue
+            s="$(grep -rl --include=settings.gradle.kts 'StageSound' "$d" 2>/dev/null | head -n 1 || true)"
+            if [ -n "$s" ]; then
+              ROOT="$(dirname "$s")"
+              echo "Found project in zip: $z"
+              break
+            fi
+          done
+          if [ -z "$ROOT" ] && [ -f settings.gradle.kts ] && grep -q 'StageSound' settings.gradle.kts; then
+            ROOT="$(pwd)"
+          fi
+          if [ -z "$ROOT" ]; then
+            echo "::error::No StageSound project zip found in the repository"
+            exit 1
+          fi
+          echo "ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: Build debug APK
+        working-directory: ${{ env.ROOT }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: StageSound-apk
+          path: ${{ env.ROOT }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
